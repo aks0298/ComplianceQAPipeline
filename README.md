@@ -1,19 +1,21 @@
 # Compliance QA Pipeline
 
-Streamlit front end and LangGraph backend for auditing YouTube videos against indexed compliance rules.
+A YouTube compliance audit app with a FastAPI backend and a chat-style JavaScript frontend.
 
 ## What it does
 
-- Downloads a YouTube video.
-- Uploads the media to Supabase storage when configured.
+- Accepts a YouTube video URL from the user.
+- Downloads and uploads the media when configured.
 - Extracts transcript data and indexes it into Qdrant.
 - Retrieves relevant rule snippets from Qdrant.
 - Uses Gemini to return a structured compliance report.
+- Presents the useful workflow states in a ChatGPT-like interface.
 
 ## Project layout
 
+- `app.py` serves the FastAPI API and the static frontend.
+- `frontend/index.html`, `frontend/styles.css`, and `frontend/app.js` implement the web UI.
 - `main.py` runs the CLI simulation against the LangGraph workflow.
-- `frontend/streamlit_app.py` is the Streamlit UI.
 - `backend/src/graph/` contains the workflow and node logic.
 - `backend/src/services/video_indexer.py` handles video download, upload, and transcription.
 - `backend/scripts/index_documents.py` indexes the PDF rule documents into Qdrant.
@@ -49,10 +51,16 @@ Before running the audit, index the PDFs in `backend/data` into Qdrant:
 python backend/scripts/index_documents.py
 ```
 
-## Run the Streamlit frontend
+## Run the web app
 
 ```bash
-streamlit run frontend/streamlit_app.py
+python app.py
+```
+
+Then open:
+
+```bash
+http://127.0.0.1:8000
 ```
 
 ## Run the CLI simulation
@@ -65,4 +73,4 @@ python main.py
 
 - The current workflow only supports YouTube URLs.
 - The audit result is only as good as the indexed rule corpus in Qdrant.
-- The frontend shows the raw JSON output so it is easy to debug backend behavior.
+- The frontend shows only the useful workflow states, not the noisy raw library logs.

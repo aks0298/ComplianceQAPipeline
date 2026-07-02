@@ -1,83 +1,197 @@
-import uuid
-import logging
+from __future__ import annotations
 
-import streamlit as st
+import logging
+import os
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List
+
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 load_dotenv(override=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("streamlit-ui")
+logger = logging.getLogger("compliance-web")
 
-st.set_page_config(page_title="Compliance QA Pipeline", page_icon="🛡️", layout="wide")
+BASE_DIR = Path(__file__).resolve().parent
+FRONTEND_DIR = BASE_DIR / "frontend"
 
-st.title("Compliance QA Pipeline")
-st.caption("Submit a YouTube video URL to run the compliance audit workflow.")
+app = FastAPI(title="Compliance QA Pipeline", version="1.0.0")
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR), html=False), name="static")
 
-with st.sidebar:
-    st.header("Configuration")
-    video_url = st.text_input(
-        "Video URL",
-        value="",
-        help="Paste a YouTube video URL to analyze.",
+
+class AuditRequest(BaseModel):
+    video_url: str = Field(min_length=1)
+
+
+def _is_youtube_url(video_url: str) -> bool:
+    normalized = video_url.strip().lower()
+    return "youtube.com" in normalized or "youtu.be" in normalized
+
+
+def _count_words(text: str) -> int:
+    return len([part for part in text.split() if part.strip()])
+
+
+def _preview_text(text: str, limit: int = 280) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 3].rstrip()}..."
+
+
+def _build_timeline(initial_inputs: Dict[str, Any], final_state: Dict[str, Any]) -> List[Dict[str, str]]:
+    transcript = (final_state.get("transcript") or "").strip()
+    findings = final_state.get("compliance_results") or []
+    errors = final_state.get("errors") or []
+    video_metadata = final_state.get("video_metadata") or {}
+    final_status = (final_state.get("final_status") or "UNKNOWN").upper()
+
+    stages: List[Dict[str, str]] = [
+        {
+            "title": "Video URL received",
+            "status": "success",
+            "detail": initial_inputs["video_url"],
+        }
+    ]
+
+    if errors and final_status == "FAIL" and not transcript:
+        stages.append(
+            {
+                "title": "Workflow stopped during indexing",
+                "status": "error",
+                "detail": "; ".join(errors),
+            }
+        )
+        return stages
+
+    stages.extend(
+        [
+            {
+                "title": "Video downloaded",
+                "status": "success" if video_metadata.get("source") else "warning",
+                "detail": "YouTube media was downloaded and prepared for analysis."
+                if video_metadata.get("source")
+                else "The workflow did not return a media source URL.",
+            },
+            {
+                "title": "Video uploaded",
+                "status": "success" if video_metadata.get("source") else "warning",
+                "detail": video_metadata.get("source", "No public storage URL was returned."),
+            },
+            {
+                "title": "Transcript extracted",
+                "status": "success" if transcript else "warning",
+                "detail": (
+                    f"{_count_words(transcript)} words captured from the audio track."
+                    if transcript
+                    else "No transcript was produced, so downstream analysis had less context."
+                ),
+            },
+            {
+                "title": "Compliance analysis completed",
+                "status": "success" if final_status == "PASS" else "warning" if final_status == "FAIL" else "info",
+                "detail": (
+                    f"{len(findings)} finding(s) returned. Final status: {final_status}."
+                    if findings
+                    else f"No findings were returned. Final status: {final_status}."
+                ),
+            },
+        ]
     )
-    run_button = st.button("Run Audit", type="primary")
 
-if run_button:
-    if not video_url.strip():
-        st.error("Please provide a video URL.")
-        st.stop()
+    if errors:
+        stages.append(
+            {
+                "title": "Warnings captured",
+                "status": "warning",
+                "detail": "; ".join(errors),
+            }
+        )
+
+    return stages
+
+
+def _build_response(initial_inputs: Dict[str, Any], final_state: Dict[str, Any]) -> Dict[str, Any]:
+    transcript = (final_state.get("transcript") or "").strip()
+    findings = final_state.get("compliance_results") or []
+    errors = final_state.get("errors") or []
+    video_metadata = final_state.get("video_metadata") or {}
+    final_status = (final_state.get("final_status") or "UNKNOWN").upper()
+    final_report = final_state.get("final_report") or "No report was returned."
+
+    return {
+        "request": initial_inputs,
+        "summary": {
+            "video_id": initial_inputs["video_id"],
+            "final_status": final_status,
+            "final_report": final_report,
+            "finding_count": len(findings),
+            "has_transcript": bool(transcript),
+            "transcript_words": _count_words(transcript),
+            "source_url": video_metadata.get("source"),
+            "platform": video_metadata.get("platform", "youtube"),
+        },
+        "timeline": _build_timeline(initial_inputs, final_state),
+        "findings": findings,
+        "transcript_preview": _preview_text(transcript),
+        "errors": errors,
+        "raw_state": final_state,
+    }
+
+
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/health")
+def health() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/api/audit")
+def audit_video(payload: AuditRequest) -> JSONResponse:
+    video_url = payload.video_url.strip()
+    if not _is_youtube_url(video_url):
+        raise HTTPException(status_code=400, detail="Please provide a valid YouTube URL.")
 
     initial_inputs = {
-        "video_url": video_url.strip(),
+        "video_url": video_url,
         "video_id": f"video_{uuid.uuid4().hex[:8]}",
         "compliance_results": [],
         "errors": [],
     }
 
-    st.session_state["last_inputs"] = initial_inputs
+    logger.info("Running audit for video url: %s", video_url)
 
-    with st.spinner("Running compliance workflow..."):
-        try:
-            from backend.src.graph.workflow import app as workflow_app
+    try:
+        from backend.src.graph.workflow import app as workflow_app
 
-            final_state = workflow_app.invoke(initial_inputs)
-            st.session_state["last_result"] = final_state
-            st.success("Audit completed.")
-        except Exception as exc:
-            logger.exception("Workflow execution failed")
-            st.session_state["last_result"] = {
-                "errors": [str(exc)],
-                "final_status": "FAIL",
-                "final_report": "Workflow execution failed.",
-            }
-            st.error(f"Workflow error: {exc}")
+        final_state = workflow_app.invoke(initial_inputs)
+    except Exception as exc:
+        logger.exception("Workflow execution failed")
+        final_state = {
+            "video_url": video_url,
+            "video_id": initial_inputs["video_id"],
+            "compliance_results": [],
+            "errors": [str(exc)],
+            "final_status": "FAIL",
+            "final_report": "Workflow execution failed.",
+            "video_metadata": {"platform": "youtube"},
+            "transcript": "",
+            "ocr_text": [],
+        }
 
-if "last_inputs" in st.session_state:
-    st.subheader("Latest request")
-    st.json(st.session_state["last_inputs"])
+    return JSONResponse(_build_response(initial_inputs, final_state))
 
-if "last_result" in st.session_state:
-    result = st.session_state["last_result"]
-    st.subheader("Audit result")
 
-    st.metric("Status", result.get("final_status", "UNKNOWN"))
-    st.write(result.get("final_report", "No report generated."))
+if __name__ == "__main__":
+    import uvicorn
 
-    errors = result.get("errors", [])
-    if errors:
-        st.warning("Errors")
-        for error in errors:
-            st.write(f"- {error}")
-
-    compliance_results = result.get("compliance_results", [])
-    if compliance_results:
-        st.subheader("Compliance findings")
-        for item in compliance_results:
-            with st.expander(f"{item.get('severity', 'UNKNOWN')} - {item.get('category', 'General')}"):
-                st.write(item.get("description", "No description available."))
-    else:
-        st.info("No compliance findings were returned.")
-
-    with st.expander("Raw workflow state"):
-        st.json(result)
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)

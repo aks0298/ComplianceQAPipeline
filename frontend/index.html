@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Compliance QA Pipeline</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script defer src="/static/app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-lockup">
+          <div class="brand-mark">CQ</div>
+          <div>
+            <div class="brand-name">Compliance QA</div>
+            <div class="brand-subtitle">Chat-style YouTube audit</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <p class="panel-kicker">Workflow</p>
+          <h2>Paste one YouTube URL</h2>
+          <p class="panel-copy">
+            The backend downloads the video, extracts transcript data, evaluates the compliance rules,
+            and returns the useful states in a conversational layout.
+          </p>
+        </section>
+
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Compliance audit interface</p>
+            <h1>Run a YouTube compliance check</h1>
+          </div>
+          <div class="status-pill neutral" id="connection-pill">Ready</div>
+        </header>
+
+        <section class="chat-panel">
+          <div id="chat-feed" class="chat-feed" aria-live="polite"></div>
+
+          <form id="audit-form" class="composer" autocomplete="off">
+            <input
+              id="video-url"
+              name="video-url"
+              type="url"
+              placeholder="Paste a YouTube video URL here"
+              spellcheck="false"
+              required
+            />
+            <button type="submit" id="submit-btn">Analyze</button>
+          </form>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
